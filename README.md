@@ -48,9 +48,6 @@ memnoir your_file.c
 - C or C++ source/binary files
 - sudo access (for installation)
 
-## 📜 License
-- MIT License
-
 ## 🙋 Author
 - Created with ❤️ by Nikhil Kumar
 - Open to contributions, issues, and suggestions!
