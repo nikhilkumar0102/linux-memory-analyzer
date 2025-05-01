@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+import subprocess
+import sys
+import os
+import re
+import time
+import random
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+COLORS = {
+    "HEADER": "\033[95m",
+    "OKBLUE": "\033[94m",
+    "OKGREEN": "\033[92m",
+    "WARNING": "\033[93m",
+    "FAIL": "\033[91m",
+    "ENDC": "\033[0m",
+    "BOLD": "\033[1m",
+    "UNDERLINE": "\033[4m"
+}
+
+def colored(text, color):
+    return f"{COLORS[color]}{text}{COLORS['ENDC']}"
+
+def show_banner():
+    banner = r"""
+███╗   ███╗███████╗███╗   ███╗███╗   ██╗ ██████╗ ██████╗ 
+████╗ ████║██╔════╝████╗ ████║████╗  ██║██╔═══██╗██╔══██╗
+██╔████╔██║█████╗  ██╔████╔██║██╔██╗ ██║██║   ██║██████╔╝
+██║╚██╔╝██║██╔══╝  ██║╚██╔╝██║██║╚██╗██║██║   ██║██╔═══╝ 
+██║ ╚═╝ ██║███████╗██║ ╚═╝ ██║██║ ╚████║╚██████╔╝██║     
+╚═╝     ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝     
+        🚀 Memnoir - The Memory Sentinel v1.2             
+===========================================================
+🧠 Detects Stack Overflow | Heap Overflow | Buffer Overflows
+🐍 Powered by Python + AddressSanitizer (ASan)
+===========================================================
+"""
+    print(colored(banner, "OKBLUE"))
+
+def compile_source(source_file):
+    print(colored("\n🚀 Compiling the source code...", "OKGREEN"))
+    _, ext = os.path.splitext(source_file)
+    output_file = os.path.splitext(source_file)[0]
+    compiler = "gcc" if ext == ".c" else "g++"
+
+    compile_cmd = [compiler, "-g", "-fsanitize=address", "-fno-omit-frame-pointer", source_file, "-o", output_file]
+    try:
+        subprocess.run(compile_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return output_file
+    except subprocess.CalledProcessError as e:
+        print(colored("❌ Compilation failed:", "FAIL"))
+        print(e.stderr.decode())
+        return None
+
+def run_binary(binary_path, requires_input=False, input_text=None):
+    print(colored("\n🔍 Running binary under ASan (AddressSanitizer)...", "OKBLUE"), binary_path)
+
+    try:
+        if requires_input and input_text is not None:
+            result = subprocess.run(
+                [f"./{binary_path}"],
+                input=input_text.encode(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10
+            )
+        elif requires_input:
+            print(colored("\n📥 INPUT SECTION: Enter the input expected by the program below:", "WARNING"))
+            print(colored("(End input with Ctrl+D or Ctrl+Z depending on your OS)", "OKBLUE"))
+            try:
+                user_input = sys.stdin.read()
+            except KeyboardInterrupt:
+                user_input = ""
+            result = subprocess.run(
+                [f"./{binary_path}"],
+                input=user_input.encode(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10
+            )
+        else:
+            result = subprocess.run(
+                [f"./{binary_path}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10
+            )
+        output = result.stdout.decode(errors='ignore') + result.stderr.decode(errors='ignore')
+        if result.returncode != 0:
+            output += f"\nProgram crashed with exit code {result.returncode}"
+        return output
+    except subprocess.TimeoutExpired:
+        return "Program timed out"
+    except Exception as e:
+        return f"Error running binary: {str(e)}"
+
+def analyze_output(output, print_results=True):
+    issues = {
+        "stack_overflow": False,
+        "stack_overflow_details": [],
+        "heap_issue": False,
+        "heap_issue_details": [],
+        "buffer_overflow": False,
+        "buffer_overflow_details": [],
+        "memory_leak": False,
+        "memory_leak_details": [],
+    }
+    for line in output.splitlines():
+        lower = line.lower()
+        if "stack-overflow" in lower or "stack overflow" in lower or "segmentation fault" in lower:
+            issues["stack_overflow"] = True
+            issues["stack_overflow_details"].append(line)
+        if re.search(r"heap-buffer-overflow", lower) or re.search(r"invalid.*heap", lower):
+            issues["heap_issue"] = True
+            issues["heap_issue_details"].append(line)
+        if "stack-buffer-overflow" in lower or "buffer overflow" in lower or "is not stack'd" in lower:
+            issues["buffer_overflow"] = True
+            issues["buffer_overflow_details"].append(line)
+        if re.search(r"summary: addresssanitizer: (\d+) byte\(s\) leaked in (\d+) allocation\(s\)\.", lower):
+            issues["memory_leak"] = True
+            issues["memory_leak_details"].append(line)
+
+    if print_results:
+        print(colored("\n🧪 Analyzing execution output...", "OKGREEN"))
+        time.sleep(1)
+        print(colored("\n📊 Memory Issue Summary:\n", "HEADER"))
+
+        if issues["stack_overflow"]:
+            print(colored("🔺 Stack Overflow Detected:", "FAIL"))
+            for detail in issues["stack_overflow_details"]:
+                print("   ↪", detail.strip())
+        if issues["heap_issue"]:
+            print(colored("🔺 Heap Overflow Detected:", "FAIL"))
+            for detail in issues["heap_issue_details"]:
+                print("   ↪", detail.strip())
+        if issues["buffer_overflow"]:
+            print(colored("🔺 Buffer Overflow Detected:", "FAIL"))
+            for detail in issues["buffer_overflow_details"]:
+                print("   ↪", detail.strip())
+        if issues["memory_leak"]:
+            print(colored("💧 Memory Leak Detected:", "WARNING"))
+            for detail in issues["memory_leak_details"]:
+                print("   ↪", detail.strip())
+
+        print(colored("\n🛠 Suggestions for Fixes:\n", "BOLD"))
+        if issues["stack_overflow"]:
+            print("🔧 Avoid deep recursion or large local arrays; use heap memory or increase stack size if needed.")
+        if issues["heap_issue"]:
+            print("🔧 Check dynamic memory bounds and use malloc/free properly.")
+        if issues["buffer_overflow"]:
+            print("🔧 Use safe string functions (e.g., strncpy, snprintf) and validate input length.")
+        if issues["memory_leak"]:
+            print("🔧 Ensure all dynamically allocated memory is freed.")
+
+        print(colored("\n📢 ALERT SUMMARY:", "UNDERLINE"))
+        print(colored(f"🧠 Stack Overflow: {'❌ Detected' if issues['stack_overflow'] else '✅ Not Detected'}", "FAIL" if issues['stack_overflow'] else "OKGREEN"))
+        print(colored(f"📦 Heap Overflow: {'❌ Detected' if issues['heap_issue'] else '✅ Not Detected'}", "FAIL" if issues['heap_issue'] else "OKGREEN"))
+        print(colored(f"🛡 Buffer Overflow: {'❌ Detected' if issues['buffer_overflow'] else '✅ Not Detected'}", "FAIL" if issues['buffer_overflow'] else "OKGREEN"))
+        print(colored(f"💧 Memory Leak: {'❌ Detected' if issues['memory_leak'] else '✅ Not Detected'}", "FAIL" if issues['memory_leak'] else "OKGREEN"))
+
+    return issues
+
+def run_fuzzing(binary_path, num_tests=100, max_input_size=10000, timeout=10, gui_callback=None):
+    print(colored("\n🚀 Starting fuzzing with AddressSanitizer...", "OKGREEN"))
+    print(f"Running {num_tests} tests with inputs up to {max_input_size} bytes")
+    results_dir = "fuzz_results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+    total_issues = {
+        "stack_overflow": 0,
+        "heap_issue": 0,
+        "buffer_overflow": 0,
+        "memory_leak": 0
+    }
+    fuzzing_data = []
+
+    # Input generation strategies
+    input_types = [
+        lambda size: os.urandom(size),  # Random bytes
+        lambda size: ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', k=size)).encode(),  # Printable
+        lambda size: ('A' * size).encode(),  # Repeated char
+        lambda size: ('\0' * size).encode()  # Null bytes
+    ]
+
+    for i in range(num_tests):
+        input_type = random.choice(input_types)
+        input_size = random.randint(0, max_input_size)
+        input_data = input_type(input_size)
+
+        try:
+            result = subprocess.run(
+                [f"./{binary_path}"],
+                input=input_data,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout
+            )
+            output = result.stdout.decode(errors='ignore') + result.stderr.decode(errors='ignore')
+            if result.returncode != 0:
+                output += f"\nProgram crashed with exit code {result.returncode}"
+                if "segmentation fault" in output.lower() or result.returncode == -11:
+                    output += "\nPotential stack overflow detected due to crash"
+
+            issues = analyze_output(output, print_results=False)
+            issue_count = sum(1 for k, v in issues.items() if k.endswith("_detected") and v)
+            fuzzing_data.append(issue_count)
+
+            if issue_count > 0 or result.returncode != 0:
+                with open(os.path.join(results_dir, f"input_{i}.bin"), "wb") as f:
+                    f.write(input_data)
+                with open(os.path.join(results_dir, f"output_{i}.txt"), "w") as f:
+                    f.write(output)
+                if issues["stack_overflow"]:
+                    total_issues["stack_overflow"] += 1
+                if issues["heap_issue"]:
+                    total_issues["heap_issue"] += 1
+                if issues["buffer_overflow"]:
+                    total_issues["buffer_overflow"] += 1
+                if issues["memory_leak"]:
+                    total_issues["memory_leak"] += 1
+
+                print(colored(f"Test {i} found issues (exit code {result.returncode}):", "WARNING"))
+                if issues["stack_overflow"]:
+                    print("  Stack Overflow: Detected")
+                if issues["heap_issue"]:
+                    print("  Heap Overflow: Detected")
+                if issues["buffer_overflow"]:
+                    print("  Buffer Overflow: Detected")
+                if issues["memory_leak"]:
+                    print("  Memory Leak: Detected")
+                if result.returncode != 0 and issue_count == 0:
+                    print("  Crash detected (potential undetected issue)")
+
+        except subprocess.TimeoutExpired:
+            print(colored(f"Test {i} timed out", "WARNING"))
+            fuzzing_data.append(0)
+            with open(os.path.join(results_dir, f"output_{i}.txt"), "w") as f:
+                f.write("Test timed out")
+        except Exception as e:
+            print(colored(f"Test {i} error: {e}", "FAIL"))
+            fuzzing_data.append(0)
+            with open(os.path.join(results_dir, f"output_{i}.txt"), "w") as f:
+                f.write(f"Error: {str(e)}")
+
+    print(colored("\n📊 Fuzzing Summary:\n", "HEADER"))
+    print(f"Total tests run: {num_tests}")
+    for issue, count in total_issues.items():
+        print(f"{issue.replace('_', ' ').title()}: {count} times detected across {num_tests} tests")
+    print(f"Results saved in {results_dir}")
+
+    if gui_callback:
+        gui_callback(total_issues, fuzzing_data)
+    return total_issues, fuzzing_data
+
+class MemnoirGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Memnoir - Memory Sentinel")
+        self.root.geometry("800x600")
+        self.binary_path = None
+        self.last_results = None
+        self.fuzzing_data = []
+        self.create_widgets()
+
+    def create_widgets(self):
+        tk.Label(self.root, text="Memnoir - Stack & Heap Overflow Detector", font=("Arial", 16, "bold")).pack(pady=10)
+        tk.Button(self.root, text="Select C/C++ File", command=self.select_file).pack(pady=5)
+
+        self.status_var = tk.StringVar(value="No file selected")
+        tk.Label(self.root, textvariable=self.status_var, fg="blue").pack(pady=5)
+
+        tk.Button(self.root, text="Run Without Input", command=lambda: self.run_mode("standard")).pack(pady=5)
+        tk.Button(self.root, text="Run With Input", command=lambda: self.run_mode("input")).pack(pady=5)
+        tk.Button(self.root, text="Run Fuzzing", command=lambda: self.run_mode("fuzzing")).pack(pady=5)
+        tk.Button(self.root, text="Show Dashboard", command=self.show_dashboard).pack(pady=5)
+        tk.Button(self.root, text="Exit", command=self.root.quit).pack(pady=5)
+
+    def select_file(self):
+        file_path = filedialog.askopenfilename(filetypes=[("C/C++ files", "*.c *.cpp")])
+        if file_path:
+            if not (file_path.endswith(".c") or file_path.endswith(".cpp")):
+                messagebox.showerror("Error", "Please select a .c or .cpp file.")
+                return
+            self.binary_path = compile_source(file_path)
+            if self.binary_path:
+                self.status_var.set(f"File compiled: {self.binary_path}")
+            else:
+                self.status_var.set("Compilation failed")
+                messagebox.showerror("Error", "Compilation failed. Check console for details.")
+
+    def run_mode(self, mode):
+        if not self.binary_path:
+            messagebox.showerror("Error", "No binary selected. Please select a file first.")
+            return
+        if mode == "standard":
+            output = run_binary(self.binary_path, requires_input=False)
+            self.last_results = analyze_output(output, print_results=False)
+            messagebox.showinfo("Result", "Standard run complete. View dashboard for details.")
+        elif mode == "input":
+            input_window = tk.Toplevel(self.root)
+            input_window.title("Enter Input")
+            input_window.geometry("400x300")
+            tk.Label(input_window, text="Enter input for the program:").pack(pady=5)
+            input_text = scrolledtext.ScrolledText(input_window, height=10)
+            input_text.pack(pady=5)
+            tk.Button(input_window, text="Submit", command=lambda: self.submit_input(input_text.get("1.0", tk.END), input_window)).pack(pady=5)
+        elif mode == "fuzzing":
+            def callback(results, fuzz_data):
+                self.last_results = results
+                self.fuzzing_data = fuzz_data
+                self.root.after(0, lambda: messagebox.showinfo("Result", "Fuzzing complete. View dashboard for details."))
+            run_fuzzing(self.binary_path, gui_callback=callback)
+
+    def submit_input(self, input_text, window):
+        output = run_binary(self.binary_path, requires_input=True, input_text=input_text)
+        self.last_results = analyze_output(output, print_results=False)
+        window.destroy()
+        messagebox.showinfo("Result", "Input run complete. View dashboard for details.")
+
+    def show_dashboard(self):
+        if not self.last_results:
+            messagebox.showerror("Error", "No results available. Run a test first.")
+            return
+
+        dashboard = tk.Toplevel(self.root)
+        dashboard.title("Memnoir Dashboard")
+        dashboard.geometry("1000x700")
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        issues = ["Stack Overflow", "Heap Overflow", "Buffer Overflow", "Memory Leak"]
+        counts = [
+            self.last_results["stack_overflow"] if not self.fuzzing_data else self.last_results["stack_overflow"],
+            self.last_results["heap_issue"] if not self.fuzzing_data else self.last_results["heap_issue"],
+            self.last_results["buffer_overflow"] if not self.fuzzing_data else self.last_results["buffer_overflow"],
+            self.last_results["memory_leak"] if not self.fuzzing_data else self.last_results["memory_leak"]
+        ]
+        ax.bar(issues, counts, color=['red', 'orange', 'blue', 'green'])
+        ax.set_ylabel("Detected (Count or 1=True)")
+        ax.set_title("Memory Issues Summary")
+        plt.xticks(rotation=45)
+        canvas = FigureCanvasTkAgg(fig, master=dashboard)
+        canvas.draw()
+        canvas.get_tk_widget().pack(pady=10)
+
+        if self.fuzzing_data:
+            fig2, ax2 = plt.subplots(figsize=(6, 4))
+            ax2.plot(self.fuzzing_data, label="Issues per Test")
+            ax2.set_xlabel("Test Number")
+            ax2.set_ylabel("Number of Issues")
+            ax2.set_title("Fuzzing Issues Over Time")
+            ax2.legend()
+            canvas2 = FigureCanvasTkAgg(fig2, master=dashboard)
+            canvas2.draw()
+            canvas2.get_tk_widget().pack(pady=10)
+
+        details_frame = tk.Frame(dashboard)
+        details_frame.pack(fill=tk.BOTH, expand=True)
+        details_text = scrolledtext.ScrolledText(details_frame, height=10)
+        details_text.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
+        for issue in ["stack_overflow", "heap_issue", "buffer_overflow", "memory_leak"]:
+            if self.last_results[issue] or (self.fuzzing_data and self.last_results[issue] > 0):
+                details_text.insert(tk.END, f"{issue.replace('_', ' ').title()} Detected:\n")
+                for detail in self.last_results[f"{issue}_details"]:
+                    details_text.insert(tk.END, f"  {detail.strip()}\n")
+        details_text.config(state='disabled')
+
+def main():
+    if "--gui" in sys.argv:
+        root = tk.Tk()
+        app = MemnoirGUI(root)
+        root.mainloop()
+        return
+
+    show_banner()
+
+    if len(sys.argv) < 2:
+        source_file = input(colored("📂 Enter the path to your C/C++ source file (.c or .cpp): ", "OKBLUE"))
+    else:
+        source_file = sys.argv[1]
+
+    if not os.path.isfile(source_file):
+        print(colored(f"❌ File not found: {source_file}", "FAIL"))
+        sys.exit(1)
+
+    if not (source_file.endswith(".c") or source_file.endswith(".cpp")):
+        print(colored("❌ Invalid file type. Please provide a .c or .cpp file.", "FAIL"))
+        sys.exit(1)
+
+    binary = compile_source(source_file)
+    if not binary:
+        sys.exit(1)
+
+    while True:
+        print(colored("\n🛠 Select an option:", "HEADER"))
+        print(colored("1. Run program without input", "OKGREEN"))
+        print(colored("2. Run program with input", "OKGREEN"))
+        print(colored("3. Run fuzzing tests", "OKGREEN"))
+        print(colored("4. Exit", "WARNING"))
+        choice = input(colored("Enter your choice (1-4): ", "OKBLUE"))
+
+        if choice == "1":
+            execution_output = run_binary(binary, requires_input=False)
+            analyze_output(execution_output, print_results=True)
+        elif choice == "2":
+            execution_output = run_binary(binary, requires_input=True)
+            analyze_output(execution_output, print_results=True)
+        elif choice == "3":
+            run_fuzzing(binary, num_tests=100, max_input_size=10000, timeout=10)
+        elif choice == "4":
+            print(colored("👋 Exiting Memnoir. Goodbye!", "OKBLUE"))
+            sys.exit(0)
+        else:
+            print(colored("❌ Invalid choice. Please enter 1, 2, 3, or 4.", "FAIL"))
+
+if __name__ == "__main__":
+    main()
