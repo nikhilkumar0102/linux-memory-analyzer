@@ -48,6 +48,18 @@ memnoir your_file.c
 - C or C++ source/binary files
 - sudo access (for installation)
 
+## 🔍 Technical Overview
+
+Memnoir uses parsing techniques to analyze C/C++ source code and detect:
+
+- Stack and heap allocation patterns
+- Buffer overflow vulnerabilities (e.g., unsafe `strcpy`, `gets`)
+- Unfreed memory allocations (`malloc` without `free`)
+- Fuzzing logic to simulate input variations
+- Warnings based on memory misuse patterns and common CVEs
+
+The tool does **not require compilation** — it works directly on source files. Future updates will include binary analysis capabilities.
+
 ## 🙋 Author
 - Created with ❤️ by Nikhil Kumar
 - Open to contributions, issues, and suggestions!
